@@ -8,21 +8,41 @@ services:
     ports: ["8086:8086"]
     volumes:
       - influxdb_data:/var/lib/influxdb2
+    env_file: .env
     environment:
       - DOCKER_INFLUXDB_INIT_MODE=setup
-      - DOCKER_INFLUXDB_INIT_USERNAME=admin
-      - DOCKER_INFLUXDB_INIT_PASSWORD=password
-      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=mytoken
       - DOCKER_INFLUXDB_INIT_ORG=velib
       - DOCKER_INFLUXDB_INIT_BUCKET=velib
+      - DOCKER_INFLUXDB_INIT_RETENTION=168h
+    healthcheck:
+      test: ["CMD", "influx", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  influxdb-setup:
+    image: influxdb:2
+    depends_on:
+      influxdb:
+        condition: service_healthy
+    volumes:
+      - ./influxdb:/etc/influxdb
+    entrypoint: ["sh", "/etc/influxdb/setup.sh"]
+    env_file: .env
+    environment:
+      - INFLUX_HOST=http://influxdb:8086
+      - INFLUX_TOKEN=${DOCKER_INFLUXDB_INIT_ADMIN_TOKEN}
+      - INFLUX_ORG=velib
 
   grafana:
     image: grafana/grafana
     ports: ["3000:3000"]
     depends_on:
-      - influxdb
+      influxdb:
+        condition: service_healthy
     volumes:
       - grafana:/var/lib/grafana
+    env_file: .env
 
   collector:
     build: .
@@ -45,10 +65,11 @@ services:
     environment:
       - MQTT_BROKER=mosquitto
       - INFLUXDB_URL=http://influxdb:8086
-      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=mytoken
     depends_on:
-      - mosquitto
-      - influxdb
+      mosquitto:
+        condition: service_started
+      influxdb:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:
