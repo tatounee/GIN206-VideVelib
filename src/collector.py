@@ -18,12 +18,14 @@ JCDECAUX_CONTRACT = os.getenv("JCDECAUX_CONTRACT")
 API_URL = "https://api.jcdecaux.com/vls/v3/stations"
 MQTT_BROKER = os.getenv("MQTT_BROKER", "localhost")
 POLL_INTERVAL = 60  # secondes
+HEARTBEAT_INTERVAL = int(os.getenv("HEARTBEAT_INTERVAL", 600))  # secondes
 CSV_PATH = os.getenv("CSV_PATH", "bandwidth.csv")
 
 client = mqtt.Client()
 client.connect(MQTT_BROKER, 1883)
 
 previous_states = {}
+last_heartbeat: dict[int, float] = {}
 
 
 def _compressed_size(payload: dict) -> int:
@@ -39,7 +41,8 @@ def collect_and_publish():
     timestamp = time.time()
 
     bytes_json = 0
-    bytes_delta = 0
+    bytes_delta_heartbeat = 0  # stratégie réellement envoyée
+    bytes_delta = 0  # delta pur, pour comparaison
     bytes_compressed = 0
     bytes_delta_compressed = 0
 
@@ -55,24 +58,27 @@ def collect_and_publish():
         raw = json.dumps(payload)
         msg_size = len(raw.encode())
 
-        # Stratégie 1 : JSON brut — seul message réellement envoyé
-        client.publish(topic, raw)
-        bytes_json += msg_size
-
-        # Stratégies 2, 3, 4 : calcul uniquement
         current_state = (payload["bikes"], payload["stands"])
         changed = previous_states.get(station_id) != current_state
+        heartbeat_due = (
+            timestamp - last_heartbeat.get(station_id, 0)
+        ) >= HEARTBEAT_INTERVAL
+
         if changed:
             previous_states[station_id] = current_state
+        if changed or heartbeat_due:
+            last_heartbeat[station_id] = timestamp
 
-        # Stratégie 2 : Delta encoding
+        # Stratégie réelle : delta + heartbeat
+        if changed or heartbeat_due:
+            client.publish(topic, raw)
+            bytes_delta_heartbeat += msg_size
+
+        # Comparaisons pour le CSV
+        bytes_json += msg_size
         if changed:
             bytes_delta += msg_size
-
-        # Stratégie 3 : Compression msgpack+zlib
         bytes_compressed += _compressed_size(payload)
-
-        # Stratégie 4 : Delta + Compression
         if changed:
             bytes_delta_compressed += _compressed_size(payload)
 
@@ -82,13 +88,30 @@ def collect_and_publish():
         writer = csv.writer(f)
         if write_header:
             writer.writerow(
-                ["timestamp", "json_bytes", "delta_bytes", "compressed_bytes", "delta_compressed_bytes"]
+                [
+                    "timestamp",
+                    "json_bytes",
+                    "delta_heartbeat_bytes",
+                    "delta_bytes",
+                    "compressed_bytes",
+                    "delta_compressed_bytes",
+                ]
             )
-        writer.writerow([dt, bytes_json, bytes_delta, bytes_compressed, bytes_delta_compressed])
+        writer.writerow(
+            [
+                dt,
+                bytes_json,
+                bytes_delta_heartbeat,
+                bytes_delta,
+                bytes_compressed,
+                bytes_delta_compressed,
+            ]
+        )
 
     pct = lambda b: f"{b / 1024:.1f} KB ({b / bytes_json * 100:.0f}%)"
     print(
         f"[{dt}] JSON: {bytes_json / 1024:.1f} KB"
+        f" | Delta+Heartbeat (envoyé): {pct(bytes_delta_heartbeat)}"
         f" | Delta: {pct(bytes_delta)}"
         f" | Compressé: {pct(bytes_compressed)}"
         f" | Delta+Compressé: {pct(bytes_delta_compressed)}"

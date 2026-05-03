@@ -31,6 +31,7 @@ services:
     environment:
       - MQTT_BROKER=mosquitto
       - CSV_PATH=/data/bandwidth.csv
+      - HEARTBEAT_INTERVAL=600
     volumes:
       - ./data:/data
     depends_on:
