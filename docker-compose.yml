@@ -2,8 +2,6 @@ services:
   mosquitto:
     image: eclipse-mosquitto
     ports: ["1883:1883"]
-    # volumes:
-    #   - ./mosquitto.conf:/mosquitto/config/mosquitto.conf
 
   influxdb:
     image: influxdb:2
@@ -32,6 +30,9 @@ services:
     env_file: .env
     environment:
       - MQTT_BROKER=mosquitto
+      - CSV_PATH=/data/bandwidth.csv
+    volumes:
+      - ./data:/data
     depends_on:
       - mosquitto
     restart: unless-stopped
