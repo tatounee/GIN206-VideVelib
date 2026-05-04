@@ -59,7 +59,7 @@ def collect_and_publish():
         msg_size = len(raw.encode())
 
         current_state = (payload["bikes"], payload["stands"])
-        changed = previous_states.get(station_id) != current_state
+        changed = previous_states.get(station_id, (-1, -1)) != current_state
         heartbeat_due = (
             timestamp - last_heartbeat.get(station_id, 0)
         ) >= HEARTBEAT_INTERVAL
